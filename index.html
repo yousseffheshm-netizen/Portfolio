@@ -601,7 +601,7 @@ textarea.field-input{resize:vertical;min-height:90px;}
         <div class="about-photo-wrap">
           <div style="position:relative;width:fit-content;margin:0 auto;">
             <div style="width:320px;height:360px;border-radius:24px;overflow:hidden;border:1px solid var(--border-md);position:relative;">
-              <img src="https://drive.google.com/file/d/1WjXriksOJrraaxExUT3hhh6ShzR9OgSI/view?usp=sharing" alt="Youssef Hesham" style="filter:brightness(.95) saturate(.9);width:100%;height:100%;object-fit:cover;object-position:center top;"/>
+              <img src="youssef_photo.jpg" alt="Youssef Hesham" style="filter:brightness(.95) saturate(.9);width:100%;height:100%;object-fit:cover;object-position:center top;"/>
               <div style="position:absolute;inset:0;background:linear-gradient(to top,rgba(6,12,20,.6),transparent 60%);"></div>
             </div>
             <!-- Decorative corner accents -->
@@ -708,7 +708,7 @@ textarea.field-input{resize:vertical;min-height:90px;}
           </a>
           <div class="contact-card">
             <div class="contact-icon violet">📱</div>
-            <div><div class="cic-label">Phone</div><div class="cic-val">+20 10 95546073</div></div>
+            <div><div class="cic-label">Phone</div><div class="cic-val">+20 122 185 2213</div></div>
           </div>
           <div class="contact-card">
             <div class="contact-icon emerald">📍</div>
@@ -989,7 +989,7 @@ textarea.field-input{resize:vertical;min-height:90px;}
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
                 <div class="field-group"><label class="field-label">Location</label><input class="field-input" value="Ismailia, Egypt"/></div>
                 <div class="field-group"><label class="field-label">Email</label><input class="field-input" value="yousseff.heshm@gmail.com"/></div>
-                <div class="field-group"><label class="field-label">Phone</label><input class="field-input" value="+20 10 95546073"/></div>
+                <div class="field-group"><label class="field-label">Phone</label><input class="field-input" value="+20 122 185 2213"/></div>
                 <div class="field-group"><label class="field-label">Resume URL</label><input class="field-input" placeholder="https://..."/></div>
               </div>
               <div class="field-group"><label class="field-label">Profile Photo URL</label><input class="field-input" value="youssef_photo.jpg"/></div>
@@ -1019,9 +1019,12 @@ textarea.field-input{resize:vertical;min-height:90px;}
 
         <!-- PROJECTS ADMIN TAB -->
         <div id="tab-projects-admin" class="admin-tab-content" style="display:none;">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;flex-wrap:wrap;gap:10px;">
             <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);" id="admin-proj-count"></div>
-            <button class="btn-primary btn-sm" onclick="openProjectModal()"><span>➕ Add Project</span></button>
+            <div style="display:flex;gap:10px;">
+              <button class="btn-outline btn-sm" onclick="resetProjectsToDefault()" title="Reset all projects back to the original defaults" style="color:var(--rose);border-color:rgba(244,63,94,0.35);">🔄 Reset to Defaults</button>
+              <button class="btn-primary btn-sm" onclick="openProjectModal()"><span>➕ Add Project</span></button>
+            </div>
           </div>
           <div class="proj-list" id="admin-proj-list"><!-- JS renders --></div>
         </div>
@@ -1100,7 +1103,23 @@ const SKILLS_DATA = [
 
 const TECH_PILLS = ['Java','HTML','CSS','SQL','Oracle Apex','IoT','PLC','Novakon','Mobile Apps','Cloud Computing','Data Modelling','Big Data']
 
-let PROJECTS = [
+const PROJECTS_STORAGE_KEY = 'nexus_portfolio_projects'
+
+function loadProjectsFromStorage() {
+  try {
+    const stored = localStorage.getItem(PROJECTS_STORAGE_KEY)
+    if (stored) return JSON.parse(stored)
+  } catch(e) { console.warn('Could not load projects from localStorage', e) }
+  return null
+}
+
+function saveProjectsToStorage() {
+  try {
+    localStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(PROJECTS))
+  } catch(e) { console.warn('Could not save projects to localStorage', e) }
+}
+
+const DEFAULT_PROJECTS = [
   { id:'p1', title:'SEDCO Factory IoT', category:'iot', short:'Factory digitalization using IoT — connected PLCs to Novakon Gateways for real-time machine monitoring at SEDCO.',
     full:'A comprehensive factory digitalization project at SEDCO leveraging Internet of Things technology to modernize industrial operations. The system connects Programmable Logic Controllers (PLCs) to Novakon Gateways enabling real-time data transmission to factory servers.', featured:true, views:2840,
     problem:'Factory operations relied on manual monitoring — no real-time visibility into machine performance, speed, temperature, or fault conditions.',
@@ -1162,6 +1181,8 @@ let PROJECTS = [
     gallery:['https://images.unsplash.com/photo-1555066931-4365d14bab8c?w=800&q=80']
   }
 ]
+
+let PROJECTS = loadProjectsFromStorage() || DEFAULT_PROJECTS
 
 let activeFilter = 'all'
 let searchQuery = ''
@@ -1698,14 +1719,24 @@ function saveProject() {
     PROJECTS.push(data)
     showToast('✅ Project added! It\'s now live on the site.')
   }
+  saveProjectsToStorage()
   closeProjectModal(); renderAdminProjects(); renderFeatured()
 }
 
 function deleteProject(id) {
   if(!confirm('Delete this project? This cannot be undone.')) return
   PROJECTS=PROJECTS.filter(p=>p.id!==id)
+  saveProjectsToStorage()
   renderAdminProjects(); renderFeatured()
   showToast('🗑️ Project deleted.')
+}
+
+function resetProjectsToDefault() {
+  if(!confirm('Reset ALL projects to defaults? Your admin changes will be lost.')) return
+  PROJECTS = JSON.parse(JSON.stringify(DEFAULT_PROJECTS))
+  saveProjectsToStorage()
+  renderAdminProjects(); renderFeatured()
+  showToast('🔄 Projects reset to defaults.')
 }
 
 /* ══════════════════════════════════════════════════
