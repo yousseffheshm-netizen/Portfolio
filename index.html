@@ -438,6 +438,16 @@ textarea.field-input{resize:vertical;min-height:90px;}
 .img-preview-item .remove-btn{position:absolute;top:4px;right:4px;width:22px;height:22px;border-radius:50%;background:rgba(244,63,94,.85);border:none;color:#fff;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .2s;}
 .img-preview-item:hover .remove-btn{opacity:1;}
 .img-upload-count{font-family:var(--font-mono);font-size:10px;color:var(--text-dim);margin-top:8px;text-align:center;}
+/* Upload loading / error states */
+.img-preview-item.loading{border-color:rgba(0,210,255,0.4);}
+.img-preview-item.error{border-color:rgba(244,63,94,0.5);}
+.img-loading-overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(6,12,20,.75);gap:6px;}
+.img-spinner{width:24px;height:24px;border:2px solid rgba(0,210,255,0.2);border-top-color:var(--cyan);border-radius:50%;animation:spin .8s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+.img-loading-label{font-family:var(--font-mono);font-size:8px;letter-spacing:.1em;color:var(--cyan);text-transform:uppercase;}
+.img-error-overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(6,12,20,.8);gap:4px;}
+.img-error-icon{font-size:18px;}
+.img-error-label{font-family:var(--font-mono);font-size:8px;letter-spacing:.08em;color:var(--rose);text-transform:uppercase;text-align:center;padding:0 4px;}
 .proj-list-thumb{width:80px;height:52px;border-radius:8px;overflow:hidden;background:var(--panel);flex-shrink:0;}
 .proj-list-info{flex:1;min-width:0;}
 .proj-list-name{font-family:var(--font-display);font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text);margin-bottom:4px;}
@@ -1546,18 +1556,8 @@ function openDetail(id) {
 }
 
 /* ══════════════════════════════════════════════════
-   CONTACT
+   CONTACT — placeholder (real handler is below via EmailJS)
 ══════════════════════════════════════════════════ */
-function handleContactSubmit(btn) {
-  btn.disabled=true
-  const orig=btn.querySelector('span').textContent
-  btn.querySelector('span').textContent='⏳ Sending...'
-  setTimeout(()=>{
-    showToast('✅ Message sent! I\'ll respond within 24 hours.')
-    btn.querySelector('span').textContent=orig
-    btn.disabled=false
-  },1400)
-}
 
 /* ══════════════════════════════════════════════════
    ADMIN AUTH
@@ -1679,22 +1679,38 @@ function renderAdminProjects() {
 }
 
 /* ── Image Upload State ── */
-let _uploadedImages = [] // array of base64 data URLs
+let _uploadedImages = [] // array of { src: string|null, status: 'loading'|'done'|'error', name: string }
 
 function handleImageFiles(files) {
   Array.from(files).forEach(file => {
     if(!file.type.startsWith('image/')) return
+    // Reserve a slot immediately so the loading spinner appears at once
+    const slot = { src: null, status: 'loading', name: file.name }
+    _uploadedImages.push(slot)
+    const idx = _uploadedImages.length - 1
+    renderImagePreviews()
+
     const reader = new FileReader()
-    reader.onload = e => { _uploadedImages.push(e.target.result); renderImagePreviews() }
+    reader.onload = e => {
+      _uploadedImages[idx].src = e.target.result
+      _uploadedImages[idx].status = 'done'
+      renderImagePreviews()
+    }
+    reader.onerror = () => {
+      _uploadedImages[idx].status = 'error'
+      renderImagePreviews()
+    }
     reader.readAsDataURL(file)
   })
   // reset input so same file can be re-selected
-  document.getElementById('mp-img-file').value = ''
+  const fileInput = document.getElementById('mp-img-file')
+  if(fileInput) fileInput.value = ''
 }
 
 function handleImageDrop(e) {
   e.preventDefault()
-  document.getElementById('img-upload-zone').classList.remove('drag-over')
+  const zone = document.getElementById('img-upload-zone')
+  if(zone) zone.classList.remove('drag-over')
   handleImageFiles(e.dataTransfer.files)
 }
 
@@ -1707,15 +1723,45 @@ function renderImagePreviews() {
   const grid = document.getElementById('img-preview-grid')
   const count = document.getElementById('img-upload-count')
   if(!grid) return
-  grid.innerHTML = _uploadedImages.map((src, i) => `
-    <div class="img-preview-item">
-      <img src="${src}" alt="preview ${i+1}"/>
-      ${i===0 ? '<span class="cover-badge">Cover</span>' : ''}
-      <button class="remove-btn" onclick="removeUploadedImage(${i})" title="Remove">✕</button>
-    </div>`).join('')
-  if(count) count.textContent = _uploadedImages.length
-    ? `${_uploadedImages.length} image${_uploadedImages.length!==1?'s':''} selected · first is cover`
-    : ''
+  grid.innerHTML = _uploadedImages.map((item, i) => {
+    if(item.status === 'loading') {
+      return `
+        <div class="img-preview-item loading">
+          <div class="img-loading-overlay">
+            <div class="img-spinner"></div>
+            <div class="img-loading-label">Uploading…</div>
+          </div>
+        </div>`
+    }
+    if(item.status === 'error') {
+      return `
+        <div class="img-preview-item error">
+          <div class="img-error-overlay">
+            <div class="img-error-icon">❌</div>
+            <div class="img-error-label">Failed</div>
+          </div>
+          <button class="remove-btn" style="opacity:1" onclick="removeUploadedImage(${i})" title="Remove">✕</button>
+        </div>`
+    }
+    // status === 'done'
+    return `
+      <div class="img-preview-item">
+        <img src="${item.src}" alt="preview ${i+1}"/>
+        ${i===0 ? '<span class="cover-badge">Cover</span>' : ''}
+        <button class="remove-btn" onclick="removeUploadedImage(${i})" title="Remove">✕</button>
+      </div>`
+  }).join('')
+  const done = _uploadedImages.filter(x => x.status === 'done')
+  const loading = _uploadedImages.filter(x => x.status === 'loading')
+  const errors = _uploadedImages.filter(x => x.status === 'error')
+  let msg = ''
+  if(_uploadedImages.length) {
+    msg = `${done.length} image${done.length!==1?'s':''} ready`
+    if(loading.length) msg += ` · ⏳ ${loading.length} uploading`
+    if(errors.length) msg += ` · ❌ ${errors.length} failed`
+    if(done.length) msg += ' · first is cover'
+  }
+  if(count) count.textContent = msg
 }
 
 function openProjectModal(id) {
@@ -1736,9 +1782,9 @@ function openProjectModal(id) {
     document.getElementById('mp-github').value = p.github
     document.getElementById('mp-live').value = p.live
     const tog = document.getElementById('mp-featured-toggle'); tog.classList.toggle('on', p.featured)
-    // Pre-load existing images as previews
+    // Pre-load existing images as previews (wrap in the slot format)
     const existingImgs = p.gallery && p.gallery.length ? p.gallery : (p.img ? [p.img] : [])
-    _uploadedImages = [...existingImgs]
+    _uploadedImages = existingImgs.map(src => ({ src, status: 'done', name: '' }))
   } else {
     title.textContent = 'Add New Project'
     document.querySelectorAll('[id^=mp-]').forEach(el => { if(el.tagName !== 'SELECT' && el.type !== 'file') el.value = '' })
@@ -1752,15 +1798,22 @@ function closeProjectModal() {
   document.getElementById('proj-modal').classList.remove('open')
   editingProjectId = null
   _uploadedImages = []
-  renderImagePreviews()
+  const grid = document.getElementById('img-preview-grid')
+  const count = document.getElementById('img-upload-count')
+  if(grid) grid.innerHTML = ''
+  if(count) count.textContent = ''
 }
 
 async function saveProject() {
   const title = document.getElementById('mp-title').value.trim()
   if(!title) { showToast('⚠️ Title is required.'); return }
+  // Check if any images are still loading
+  const stillLoading = _uploadedImages.some(x => x.status === 'loading')
+  if(stillLoading) { showToast('⏳ Please wait — images are still uploading.'); return }
   const fallback = 'https://images.unsplash.com/photo-1555066931-4365d14bab8c?w=800&q=80'
-  const coverImg = _uploadedImages[0] || fallback
-  const gallery  = _uploadedImages.length ? [..._uploadedImages] : [fallback]
+  const doneImgs = _uploadedImages.filter(x => x.status === 'done').map(x => x.src)
+  const coverImg = doneImgs[0] || fallback
+  const gallery  = doneImgs.length ? [...doneImgs] : [fallback]
   const data = {
     title, category: document.getElementById('mp-cat').value,
     short: document.getElementById('mp-short').value,
@@ -1774,8 +1827,10 @@ async function saveProject() {
     featured: document.getElementById('mp-featured-toggle').classList.contains('on'),
     views: 0, gallery
   }
-  const saveBtn = document.querySelector('#proj-modal .save-btn')
-  if(saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '⏳ Saving...' }
+  // Find the save button (it has class btn-primary inside the modal footer)
+  const saveBtn = document.querySelector('#proj-modal button[onclick="saveProject()"]')
+  const saveBtnSpan = saveBtn ? saveBtn.querySelector('span') : null
+  if(saveBtn) { saveBtn.disabled = true; if(saveBtnSpan) saveBtnSpan.textContent = '⏳ Saving...' }
   try {
     if(editingProjectId) {
       const idx = PROJECTS.findIndex(p => p.id === editingProjectId)
@@ -1790,7 +1845,7 @@ async function saveProject() {
       showToast('✅ Project added! Now visible on all devices.')
     }
   } finally {
-    if(saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Project' }
+    if(saveBtn) { saveBtn.disabled = false; if(saveBtnSpan) saveBtnSpan.textContent = '💾 Save Project' }
   }
   closeProjectModal(); renderAdminProjects(); renderFeatured()
 }
