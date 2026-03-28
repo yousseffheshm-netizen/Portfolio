@@ -9,6 +9,7 @@
 <!-- Firebase SDK (compat v9) -->
 <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-storage-compat.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet"/>
@@ -441,10 +442,13 @@ textarea.field-input{resize:vertical;min-height:90px;}
 /* Upload loading / error states */
 .img-preview-item.loading{border-color:rgba(0,210,255,0.4);}
 .img-preview-item.error{border-color:rgba(244,63,94,0.5);}
-.img-loading-overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(6,12,20,.75);gap:6px;}
-.img-spinner{width:24px;height:24px;border:2px solid rgba(0,210,255,0.2);border-top-color:var(--cyan);border-radius:50%;animation:spin .8s linear infinite;}
+.img-loading-overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(6,12,20,.78);gap:5px;}
+.img-upload-progress-wrap{width:70%;height:4px;background:rgba(0,210,255,0.15);border-radius:2px;overflow:hidden;}
+.img-upload-progress-bar{height:100%;border-radius:2px;background:linear-gradient(90deg,var(--cyan),var(--violet-br));transition:width .2s linear;box-shadow:0 0 6px var(--cyan-glow);}
+.img-spinner{width:20px;height:20px;border:2px solid rgba(0,210,255,0.2);border-top-color:var(--cyan);border-radius:50%;animation:spin .8s linear infinite;}
 @keyframes spin{to{transform:rotate(360deg);}}
 .img-loading-label{font-family:var(--font-mono);font-size:8px;letter-spacing:.1em;color:var(--cyan);text-transform:uppercase;}
+.img-loading-pct{font-family:var(--font-mono);font-size:10px;font-weight:700;color:var(--cyan);}
 .img-error-overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(6,12,20,.8);gap:4px;}
 .img-error-icon{font-size:18px;}
 .img-error-label{font-family:var(--font-mono);font-size:8px;letter-spacing:.08em;color:var(--rose);text-transform:uppercase;text-align:center;padding:0 4px;}
@@ -1205,13 +1209,15 @@ const FIREBASE_CONFIG = {
 }
 
 let db = null
+let storage = null
 let PROJECTS = []
 
 async function initFirebase() {
   try {
     if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG)
     db = firebase.firestore()
-    console.log('✅ Firebase Firestore connected.')
+    storage = firebase.storage()
+    console.log('✅ Firebase Firestore + Storage connected.')
     return true
   } catch(e) {
     console.warn('⚠️ Firebase init failed. Set your FIREBASE_CONFIG values.', e)
@@ -1244,7 +1250,12 @@ async function persistProject(project) {
   if (!db) return
   try {
     const idx = PROJECTS.findIndex(p => p.id === project.id)
-    await db.collection('projects').doc(project.id).set({ ...project, _order: idx >= 0 ? idx : PROJECTS.length })
+    // Strip any leftover base64 blobs — only URLs should go to Firestore
+    const toSave = { ...project, _order: idx >= 0 ? idx : PROJECTS.length }
+    const isBase64 = v => typeof v === 'string' && v.startsWith('data:')
+    if (isBase64(toSave.img)) toSave.img = ''
+    if (Array.isArray(toSave.gallery)) toSave.gallery = toSave.gallery.filter(u => !isBase64(u))
+    await db.collection('projects').doc(project.id).set(toSave)
   } catch(e) {
     console.warn('⚠️ Firestore write failed:', e)
   }
@@ -1679,30 +1690,70 @@ function renderAdminProjects() {
 }
 
 /* ── Image Upload State ── */
-let _uploadedImages = [] // array of { src: string|null, status: 'loading'|'done'|'error', name: string }
+// Each slot: { src: string|null, status: 'loading'|'done'|'error', name: string, pct: number }
+let _uploadedImages = []
+
+function _uniqueStoragePath(file) {
+  const ext = file.name.split('.').pop().toLowerCase()
+  return `project-images/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
+}
 
 function handleImageFiles(files) {
   Array.from(files).forEach(file => {
     if(!file.type.startsWith('image/')) return
-    // Reserve a slot immediately so the loading spinner appears at once
-    const slot = { src: null, status: 'loading', name: file.name }
+    const slot = { src: null, status: 'loading', name: file.name, pct: 0 }
     _uploadedImages.push(slot)
     const idx = _uploadedImages.length - 1
     renderImagePreviews()
 
-    const reader = new FileReader()
-    reader.onload = e => {
-      _uploadedImages[idx].src = e.target.result
-      _uploadedImages[idx].status = 'done'
-      renderImagePreviews()
+    if (storage) {
+      // ── Firebase Storage upload (stores URL, not base64) ──
+      const ref = storage.ref(_uniqueStoragePath(file))
+      const task = ref.put(file)
+      task.on('state_changed',
+        snap => {
+          _uploadedImages[idx].pct = Math.round(snap.bytesTransferred / snap.totalBytes * 100)
+          renderImagePreviews()
+        },
+        err => {
+          console.warn('Storage upload error:', err)
+          _uploadedImages[idx].status = 'error'
+          renderImagePreviews()
+        },
+        async () => {
+          try {
+            const url = await ref.getDownloadURL()
+            _uploadedImages[idx].src = url
+            _uploadedImages[idx].status = 'done'
+            _uploadedImages[idx].pct = 100
+          } catch(e) {
+            _uploadedImages[idx].status = 'error'
+          }
+          renderImagePreviews()
+        }
+      )
+    } else {
+      // ── Fallback: FileReader base64 (no Storage available) ──
+      const reader = new FileReader()
+      reader.onprogress = e => {
+        if(e.lengthComputable) {
+          _uploadedImages[idx].pct = Math.round(e.loaded / e.total * 100)
+          renderImagePreviews()
+        }
+      }
+      reader.onload = e => {
+        _uploadedImages[idx].src = e.target.result
+        _uploadedImages[idx].status = 'done'
+        _uploadedImages[idx].pct = 100
+        renderImagePreviews()
+      }
+      reader.onerror = () => {
+        _uploadedImages[idx].status = 'error'
+        renderImagePreviews()
+      }
+      reader.readAsDataURL(file)
     }
-    reader.onerror = () => {
-      _uploadedImages[idx].status = 'error'
-      renderImagePreviews()
-    }
-    reader.readAsDataURL(file)
   })
-  // reset input so same file can be re-selected
   const fileInput = document.getElementById('mp-img-file')
   if(fileInput) fileInput.value = ''
 }
@@ -1725,10 +1776,15 @@ function renderImagePreviews() {
   if(!grid) return
   grid.innerHTML = _uploadedImages.map((item, i) => {
     if(item.status === 'loading') {
+      const pct = item.pct || 0
       return `
         <div class="img-preview-item loading">
           <div class="img-loading-overlay">
             <div class="img-spinner"></div>
+            <div class="img-loading-pct">${pct}%</div>
+            <div class="img-upload-progress-wrap">
+              <div class="img-upload-progress-bar" style="width:${pct}%"></div>
+            </div>
             <div class="img-loading-label">Uploading…</div>
           </div>
         </div>`
@@ -1738,12 +1794,11 @@ function renderImagePreviews() {
         <div class="img-preview-item error">
           <div class="img-error-overlay">
             <div class="img-error-icon">❌</div>
-            <div class="img-error-label">Failed</div>
+            <div class="img-error-label">Upload failed</div>
           </div>
           <button class="remove-btn" style="opacity:1" onclick="removeUploadedImage(${i})" title="Remove">✕</button>
         </div>`
     }
-    // status === 'done'
     return `
       <div class="img-preview-item">
         <img src="${item.src}" alt="preview ${i+1}"/>
